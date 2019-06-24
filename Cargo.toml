@@ -10,5 +10,9 @@ lazy_static = "1"
 ansi_term = "0.11"
 structopt = "0.2"
 
+[dev-dependencies]
+mutagen = { path = "/usr/local/src/mutagen" }
+mutagen-plugin = { path = "/usr/local/src/mutagen/plugin" }
+
 [profile.release]
 lto = true

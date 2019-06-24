@@ -1,3 +1,11 @@
+#![cfg_attr(test, feature(custom_attribute))]
+#[cfg(test)]
+extern crate mutagen;
+#[cfg(test)]
+extern crate mutagen_plugin;
+#[cfg(test)]
+use mutagen_plugin::mutate;
+
 #[macro_use]
 extern crate lazy_static;
 extern crate structopt;
