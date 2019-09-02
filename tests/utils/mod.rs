@@ -4,19 +4,19 @@ use std::io::Error;
 use std::path::Path;
 use std::process::{Command, Output};
 
-extern crate compiler;
+extern crate rcc;
 extern crate tempfile;
 
-use compiler::CompileError;
+use rcc::CompileError;
 
-pub fn compile_and_run(program: String, args: &[&str]) -> Result<Output, CompileError> {
+pub fn compile_and_run(program: String, args: &[&str]) -> Result<Output, Vec<CompileError>> {
     let output = tempfile::NamedTempFile::new().unwrap().into_temp_path();
     compile(program, false, &output)?;
-    run(&output, args).map_err(CompileError::IO)
+    run(&output, args).map_err(|err| vec![CompileError::IO(err)])
 }
 
-pub fn compile(program: String, no_link: bool, output: &Path) -> Result<(), CompileError> {
-    let module = compiler::compile(
+pub fn compile(program: String, no_link: bool, output: &Path) -> Result<(), Vec<CompileError>> {
+    let module = rcc::compile(
         program,
         "<integration-test>".to_string(),
         false,
@@ -25,10 +25,10 @@ pub fn compile(program: String, no_link: bool, output: &Path) -> Result<(), Comp
     )?;
     if !no_link {
         let tmp_file = tempfile::NamedTempFile::new().unwrap();
-        compiler::assemble(module, tmp_file.as_ref())?;
-        compiler::link(tmp_file.as_ref(), &output).map_err(std::io::Error::into)
+        rcc::assemble(module, tmp_file.as_ref()).map_err(|err| vec![err])?;
+        rcc::link(tmp_file.as_ref(), &output).map_err(|err| vec![err.into()])
     } else {
-        compiler::assemble(module, output)
+        rcc::assemble(module, output).map_err(|err| vec![err])
     }
 }
 
@@ -40,7 +40,10 @@ pub fn assert_compile_error(program: &str) {
     let output = tempfile::NamedTempFile::new().unwrap().into_temp_path();
     assert!(
         match compile(program.to_string(), true, &output) {
-            Err(CompileError::Semantic(_)) => true,
+            Err(mut errs) => match errs.pop() {
+                Some(CompileError::Semantic(_)) => true,
+                _ => false,
+            },
             _ => false,
         },
         "{} should fail to compile",

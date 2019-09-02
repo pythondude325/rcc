@@ -3,10 +3,10 @@ use std::io::{self, Read};
 use std::path::PathBuf;
 use std::process;
 
-extern crate compiler;
 extern crate pico_args;
-use compiler::{assemble, compile, link, utils, CompileError};
+extern crate rcc;
 use pico_args::Arguments;
+use rcc::{assemble, compile, link, utils, CompileError};
 use std::ffi::OsStr;
 use tempfile::NamedTempFile;
 
@@ -70,7 +70,7 @@ impl Default for Opt {
 
 // TODO: when std::process::termination is stable, make err_exit an impl for CompilerError
 // TODO: then we can move this into `main` and have main return `Result<(), CompileError>`
-fn real_main(buf: String, opt: Opt) -> Result<(), CompileError> {
+fn real_main(buf: String, opt: Opt) -> Result<(), Vec<CompileError>> {
     let product = compile(
         buf,
         opt.filename.to_string_lossy().into_owned(),
@@ -79,11 +79,11 @@ fn real_main(buf: String, opt: Opt) -> Result<(), CompileError> {
         opt.debug_asm,
     )?;
     if opt.no_link {
-        return assemble(product, opt.output.as_path());
+        return assemble(product, opt.output.as_path()).map_err(|err| vec![err]);
     }
-    let tmp_file = NamedTempFile::new()?;
-    assemble(product, tmp_file.as_ref())?;
-    link(tmp_file.as_ref(), opt.output.as_path()).map_err(io::Error::into)
+    let tmp_file = NamedTempFile::new().map_err(|err| vec![err.into()])?;
+    assemble(product, tmp_file.as_ref()).map_err(|err| vec![err])?;
+    link(tmp_file.as_ref(), opt.output.as_path()).map_err(|err| vec![err.into()])
 }
 
 fn main() {
@@ -127,7 +127,7 @@ fn main() {
     // What's happening here is the function has type `fn(...) -> !`,
     // but when it's called, that's coerced to `!`,
     // so the closure has type `fn(...) -> i32`
-    real_main(buf, opt).unwrap_or_else(|err| err_exit(err));
+    real_main(buf, opt).unwrap_or_else(|err| err_exit(&err));
 }
 
 fn os_str_to_path_buf(os_str: &OsStr) -> Result<PathBuf, bool> {
@@ -154,18 +154,20 @@ fn parse_args() -> Result<Opt, pico_args::Error> {
     })
 }
 
-fn err_exit(err: CompileError) -> ! {
+fn err_exit(errors: &[CompileError]) -> ! {
     use CompileError::*;
-    match err {
-        Semantic(err) => {
-            utils::error(&err.data, &err.location);
-            let (num_warnings, num_errors) = (utils::get_warnings(), utils::get_errors());
-            print_issues(num_warnings, num_errors);
-            process::exit(2);
+    for err in errors {
+        match err {
+            Semantic(err) => {
+                utils::error(&err.data, &err.location);
+            }
+            IO(err) => utils::fatal(&format!("{}", err), 3),
+            Platform(err) => utils::fatal(&format!("{}", err), 4),
         }
-        IO(err) => utils::fatal(&format!("{}", err), 3),
-        Platform(err) => utils::fatal(&format!("{}", err), 4),
     }
+    let (num_warnings, num_errors) = (utils::get_warnings(), utils::get_errors());
+    print_issues(num_warnings, num_errors);
+    process::exit(2);
 }
 
 fn print_issues(warnings: usize, errors: usize) {
