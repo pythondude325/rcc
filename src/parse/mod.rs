@@ -6,6 +6,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::iter::Iterator;
 use std::mem;
+use std::rc::Rc;
 
 use crate::data::{prelude::*, Scope};
 use crate::utils::warn;
@@ -15,8 +16,8 @@ pub(crate) type TagScope = Scope<InternedStr, TagEntry>;
 
 #[derive(Clone, Debug)]
 pub(crate) enum TagEntry {
-    Struct(Vec<Symbol>),
-    Union(Vec<Symbol>),
+    Struct(Rc<Vec<Symbol>>),
+    Union(Rc<Vec<Symbol>>),
     // list of (name, value)s
     Enum(Vec<(InternedStr, i64)>),
 }
@@ -66,7 +67,7 @@ struct FunctionData {
     /// where the function was declared
     location: Location,
     /// the return type of the function
-    return_type: Type,
+    return_type: InternedType,
 }
 
 impl<I> Parser<I>
@@ -184,10 +185,9 @@ impl<I: Iterator<Item = Lexeme>> Parser<I> {
     fn leave_scope(&mut self, location: Location) {
         use crate::data::StorageClass;
         for object in self.scope.get_all_immediate().values() {
-            match &object.ctype {
-                Type::Struct(StructType::Named(name, size, _, _))
-                | Type::Union(StructType::Named(name, size, _, _)) => {
-                    if *size == 0
+            match &*object.ctype {
+                Type::Struct(Some(name), members) | Type::Union(Some(name), members) => {
+                    if members.is_empty()
                         && object.storage_class != StorageClass::Extern
                         && object.storage_class != StorageClass::Typedef
                     {

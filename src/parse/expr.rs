@@ -1,4 +1,4 @@
-use super::{Lexeme, Parser, TagEntry};
+use super::{Lexeme, Parser};
 use crate::arch::SIZE_T;
 use crate::data::prelude::*;
 use crate::data::{lex::Keyword, types::ArrayType, StorageClass::Typedef};
@@ -818,7 +818,7 @@ impl<I: Iterator<Item = Lexeme>> Parser<I> {
                     };
                     let struct_type = match &expr.ctype {
                         Type::Pointer(ctype) => match **ctype {
-                            Type::Union(_) | Type::Struct(_) => (**ctype).clone(),
+                            Type::Union(_, _) | Type::Struct(_, _) => (**ctype).clone(),
                             _ => {
                                 self.semantic_err(
                                     "pointer does not point to a struct or union",
@@ -954,21 +954,14 @@ impl<I: Iterator<Item = Lexeme>> Parser<I> {
     // used for both s.a and s->a
     fn struct_member(&mut self, expr: Expr, id: InternedStr, location: Location) -> SyntaxResult {
         match &expr.ctype {
-            Type::Struct(StructType::Anonymous(members))
-            | Type::Union(StructType::Anonymous(members)) => {
-                struct_member_helper!(self, members, expr, id, location)
-            }
-            Type::Struct(StructType::Named(name, _, _, _))
-            | Type::Union(StructType::Named(name, _, _, _)) => match self.tag_scope.get(name) {
-                Some(TagEntry::Union(members)) | Some(TagEntry::Struct(members)) => {
-                    struct_member_helper!(self, members, expr, id, location)
-                }
-                None => {
+            Type::Struct(_, members) | Type::Union(_, members) => {
+                if members.is_empty() {
                     self.semantic_err(format!("{} has not yet been defined", expr.ctype), location);
                     Ok(expr)
+                } else {
+                    struct_member_helper!(self, members, expr, id, location)
                 }
-                _ => unreachable!("parser should ensure types in scope are valid"),
-            },
+            }
             _ => {
                 self.semantic_err(
                     format!("expected struct or union, got type '{}'", expr.ctype),
@@ -1222,7 +1215,7 @@ impl Expr {
     // if (expr)
     pub fn truthy(mut self) -> RecoverableResult<Expr, CompileError> {
         self = self.rval();
-        if self.ctype == Type::Bool {
+        if *self.ctype == Type::Bool {
             return Ok(self);
         }
         if !self.ctype.is_scalar() {
@@ -1237,12 +1230,12 @@ impl Expr {
                 self,
             ))
         } else {
-            let zero = Expr::zero(self.location).cast(&self.ctype).unwrap();
+            let zero = Expr::zero(self.location).cast(self.ctype).unwrap();
             Ok(Expr {
                 constexpr: self.constexpr,
                 lval: false,
                 location: self.location,
-                ctype: Type::Bool,
+                ctype: *types::BOOL,
                 expr: ExprType::Compare(Box::new(self), Box::new(zero), Token::NotEqual),
             })
         }
@@ -1250,7 +1243,7 @@ impl Expr {
     pub fn logical_not(self, location: Location) -> Expr {
         Expr {
             location,
-            ctype: Type::Bool,
+            ctype: *types::BOOL,
             constexpr: self.constexpr,
             lval: false,
             expr: ExprType::LogicalNot(Box::new(self)),
@@ -1258,8 +1251,8 @@ impl Expr {
     }
     // Simple assignment rules, section 6.5.16.1 of the C standard
     // the funky return type is so we don't consume the original expression in case of an error
-    pub fn cast(mut self, ctype: &Type) -> RecoverableResult<Expr, SemanticError> {
-        if self.ctype == *ctype {
+    pub fn cast(mut self, ctype: InternedType) -> RecoverableResult<Expr, SemanticError> {
+        if self.ctype == ctype {
             Ok(self)
         } else if self.ctype.is_arithmetic() && ctype.is_arithmetic()
             || self.is_null() && ctype.is_pointer()
@@ -1272,16 +1265,16 @@ impl Expr {
                 constexpr: self.constexpr,
                 expr: ExprType::Cast(Box::new(self)),
                 lval: false,
-                ctype: ctype.clone(),
+                ctype,
             })
         } else if ctype.is_pointer()
             && (self.expr == ExprType::Literal(Token::Int(0))
                 || self.ctype.is_void_pointer()
                 || self.ctype.is_char_pointer())
         {
-            self.ctype = ctype.clone();
+            self.ctype = ctype;
             Ok(self)
-        } else if self.ctype == Type::Error {
+        } else if *self.ctype == Type::Error {
             Ok(self)
         // TODO: allow implicit casts of const pointers
         } else {
@@ -1473,7 +1466,7 @@ impl Expr {
             constexpr: left.constexpr && right.constexpr,
             lval: false,
             location: token.location,
-            ctype: Type::Bool,
+            ctype: *types::BOOL,
             expr: ExprType::Compare(left, right, token.data),
         })
     }
@@ -1527,7 +1520,7 @@ impl Expr {
             ExprType::Literal(Token::Str(value)),
         )
     }
-    fn literal(ctype: Type, location: Location, expr: ExprType) -> Expr {
+    fn literal(ctype: InternedType, location: Location, expr: ExprType) -> Expr {
         Expr {
             constexpr: true,
             lval: false,
@@ -1670,7 +1663,7 @@ impl Type {
         }
     }
     pub fn for_string_literal(len: SIZE_T) -> Type {
-        Type::Array(Box::new(Type::Char(true)), ArrayType::Fixed(len))
+        Type::Array(*types::CHAR, ArrayType::Fixed(len))
     }
 }
 
@@ -1716,7 +1709,7 @@ mod tests {
             exp.map_err(SyntaxError::into)
         }
     }
-    fn assert_type(input: &str, ctype: Type) {
+    fn assert_type(input: &str, ctype: InternedType) {
         assert!(match parse_expr(input) {
             Ok(expr) => expr.ctype == ctype,
             _ => false,
@@ -1738,7 +1731,7 @@ mod tests {
         let parsed = parse_expr("(1)");
         assert_eq!(parsed, Ok(Expr::int_literal(1, get_location(&parsed))));
         let x = Symbol {
-            ctype: Type::Int(true),
+            ctype: *types::INT,
             id: InternedStr::get_or_intern("x"),
             qualifiers: Default::default(),
             storage_class: Default::default(),
@@ -1749,7 +1742,7 @@ mod tests {
             parsed,
             Ok(Expr {
                 location: get_location(&parsed),
-                ctype: Type::Int(true),
+                ctype: *types::INT,
                 constexpr: false,
                 lval: true,
                 expr: ExprType::Id(x)
@@ -1758,9 +1751,9 @@ mod tests {
     }
     #[test]
     fn test_mul() {
-        assert_type("1*1.0", Type::Double);
-        assert_type("1*2.0 / 1.3", Type::Double);
-        assert_type("3%2", Type::Long(true));
+        assert_type("1*1.0", *types::DOUBLE);
+        assert_type("1*2.0 / 1.3", *types::DOUBLE);
+        assert_type("3%2", *types::LONG);
     }
     #[test]
     fn test_funcall() {

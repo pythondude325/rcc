@@ -14,7 +14,7 @@ pub mod prelude {
             CompileError, CompileResult, Recoverable, RecoverableResult, SemanticError, SyntaxError,
         },
         lex::{Locatable, Location, Token},
-        types::{StructType, Type, InternedType},
+        types::{self, InternedType, StructType, Type},
         Declaration, Expr, ExprType, Stmt, StmtType, Symbol,
     };
     pub use crate::intern::InternedStr;
@@ -22,7 +22,7 @@ pub mod prelude {
 use crate::intern::InternedStr;
 use error::CompileError;
 use lex::{Keyword, Locatable, Location, Token};
-use types::{Type, InternedType};
+use types::{InternedType, Type};
 
 pub type Stmt = Locatable<StmtType>;
 
@@ -77,7 +77,7 @@ pub struct Expr {
     pub expr: ExprType,
 
     /// ctype: holds the type of the expression
-    pub ctype: Type,
+    pub ctype: InternedType,
 
     /// constexpr: whether a value can be constant-folded at compile-time
     ///
@@ -188,15 +188,6 @@ impl Qualifiers {
     };
 }
 
-// preallocate primitives
-lazy_static! {
-    pub static ref VOID: InternedType = Type::get_or_intern(Type::Void);
-    pub static ref BOOL: InternedType = Type::get_or_intern(Type::Bool);
-    pub static ref CHAR: InternedType = Type::get_or_intern(Type::Char(true));
-    pub static ref INT: InternedType = Type::get_or_intern(Type::Int(true));
-    pub static ref INT_POINTER: InternedType = Type::get_or_intern(Type::Pointer(*INT));
-}
-
 pub enum LengthError {
     Unbounded,
     Dynamic,
@@ -224,7 +215,7 @@ impl Expr {
     }
     pub fn zero(location: Location) -> Expr {
         Expr {
-            ctype: Type::Int(true),
+            ctype: Type::Int(true).into(),
             constexpr: true,
             expr: ExprType::Literal(Token::Int(0)),
             lval: false,

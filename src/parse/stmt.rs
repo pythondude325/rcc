@@ -223,7 +223,7 @@ impl<I: Iterator<Item = Lexeme>> Parser<I> {
             .as_ref()
             .expect("should have current_function set when parsing statements");
         let ret_type = &current.return_type;
-        let stmt = match (expr, *ret_type != Type::Void) {
+        let stmt = match (expr, ret_type != Type::Void.into()) {
             (None, false) => StmtType::Return(None),
             (None, true) => {
                 let err = format!("function '{}' does not return a value", current.id);
@@ -240,7 +240,7 @@ impl<I: Iterator<Item = Lexeme>> Parser<I> {
                 let expr = expr.rval();
                 if expr.ctype != *ret_type {
                     StmtType::Return(Some(
-                        Expr::cast(expr, ret_type).into_inner(self.default_err_handler()),
+                        Expr::cast(expr, *ret_type).into_inner(self.default_err_handler()),
                     ))
                 } else {
                     StmtType::Return(Some(expr))

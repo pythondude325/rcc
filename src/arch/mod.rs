@@ -84,11 +84,8 @@ impl Type {
                     _ => return Err("enum cannot be represented in SIZE_T bits"),
                 })
             }
-            Union(StructType::Named(_, size, _, _)) | Struct(StructType::Named(_, size, _, _)) => {
-                Ok(*size)
-            }
-            Struct(StructType::Anonymous(symbols)) => struct_size(&symbols),
-            Union(StructType::Anonymous(symbols)) => union_size(&symbols),
+            Struct(_, symbols) => struct_size(&symbols),
+            Union(_, symbols) => union_size(&symbols),
             Bitfield(_) => unimplemented!("sizeof(bitfield)"),
             // illegal operations
             Function(_) => Err("cannot take `sizeof` a function"),
@@ -112,11 +109,7 @@ impl Type {
             // Clang uses the largest alignment of any element as the alignment of the whole
             // Not sure why, but who am I to argue
             // Anyway, Faerie panics if the alignment isn't a power of two so it's probably for the best
-            Union(StructType::Named(_, _, align, _))
-            | Struct(StructType::Named(_, _, align, _)) => Ok(*align),
-            Union(StructType::Anonymous(members)) | Struct(StructType::Anonymous(members)) => {
-                struct_align(members)
-            }
+            Union(_, members) | Struct(_, members) => struct_align(members),
             Bitfield(_) => unimplemented!("alignof bitfield"),
             Function(_) => Err("cannot take `alignof` function"),
             Void => Err("cannot take `alignof` void"),
@@ -183,7 +176,7 @@ impl Type {
 
 impl FunctionType {
     pub fn signature(&self, isa: &dyn TargetIsa) -> Signature {
-        let mut params = if self.params.len() == 1 && self.params[0].ctype == Type::Void {
+        let mut params = if self.params.len() == 1 && self.params[0].ctype == Type::Void.into() {
             // no arguments
             Vec::new()
         } else {
@@ -269,29 +262,26 @@ mod tests {
         }
     }
     fn complex_type_for_size(size: u16) -> Type {
-        let mut types = vec![];
+        let mut ctypes = vec![];
 
         let (div, mut rem) = (size / 8, size % 8);
         if div != 0 {
-            types.push(Type::Array(
-                Box::new(Type::Long(true)),
-                ArrayType::Fixed(div.into()),
-            ));
+            ctypes.push(Type::Array(types::LONG, ArrayType::Fixed(div.into())));
         }
 
         for i in [4, 2, 1].iter() {
             let div = rem / i;
             rem %= i;
             if div == 1 {
-                types.push(type_for_size(*i));
+                ctypes.push(type_for_size(*i));
             } else {
                 assert_eq!(div, 0);
             }
         }
         assert_eq!(rem, 0);
-        struct_for_types(types)
+        struct_for_types(ctypes)
     }
-    fn symbol_for_type(ctype: Type, id: InternedStr) -> Symbol {
+    fn symbol_for_type(ctype: InternedType, id: InternedStr) -> Symbol {
         Symbol {
             id,
             ctype,

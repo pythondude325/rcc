@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::Symbol;
@@ -16,7 +17,7 @@ pub struct InternedType(usize);
 
 impl std::ops::Deref for InternedType {
     type Target = Type;
-    fn deref(&self) -> &Self::Target {
+    fn deref(&self) -> &'static Self::Target {
         &TYPES[self.0]
     }
 }
@@ -24,6 +25,12 @@ impl std::ops::Deref for InternedType {
 impl PartialEq for InternedType {
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0 || *self == *other
+    }
+}
+
+impl fmt::Display for InternedType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        (**self).fmt(f)
     }
 }
 
@@ -39,6 +46,30 @@ impl Type {
     }
 }
 
+impl Into<&Type> for InternedType {
+    fn into(self) -> &'static Type {
+        &*self
+    }
+}
+
+impl Into<InternedType> for Type {
+    fn into(self) -> InternedType {
+        self.get_or_intern()
+    }
+}
+
+// preallocate commonly used primitives
+lazy_static! {
+    pub static ref VOID: InternedType = Type::get_or_intern(Type::Void);
+    pub static ref BOOL: InternedType = Type::get_or_intern(Type::Bool);
+    pub static ref CHAR: InternedType = Type::get_or_intern(Type::Char(true));
+    pub static ref INT: InternedType = Type::get_or_intern(Type::Int(true));
+    pub static ref LONG: InternedType = Type::get_or_intern(Type::Long(true));
+    pub static ref FLOAT: InternedType = Type::get_or_intern(Type::Float);
+    pub static ref DOUBLE: InternedType = Type::get_or_intern(Type::Double);
+    pub static ref INT_POINTER: InternedType = Type::get_or_intern(Type::Pointer(*INT));
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Type {
     Void,
@@ -52,11 +83,13 @@ pub enum Type {
     Pointer(InternedType),
     Array(InternedType, ArrayType),
     Function(FunctionType),
-    Union(StructType),
-    Struct(StructType),
+    /// We need to know which scope `Struct`s came from in order to tell whether they are equal
+    /// This is done by storing a unique identifier for the scope in the struct itself
+    Struct(Option<InternedStr>, StructType),
+    Union(Option<InternedStr>, StructType),
     /// Enums should always have members, since tentative definitions are not allowed
     Enum(Option<InternedStr>, Vec<(InternedStr, i64)>),
-    /// This should probably be merged into Structs at some point
+    /// This should probably be merged into Struct at some point
     Bitfield(Vec<BitfieldType>),
     /// This is the type used for variadic arguments.
     VaList,
@@ -64,6 +97,7 @@ pub enum Type {
     Error,
 }
 
+/*
 /// Structs can be either named or anonymous.
 /// Anonymous structs carry all their information with them,
 /// there's no need (or way) to use tag_scope.
@@ -79,11 +113,14 @@ pub enum Type {
 /// struct that has not yet been defined. This may be fixed at some point in
 /// the future. Until then, all consumers are stuck. See
 /// https://github.com/jyn514/rcc/issues/44 for an example of how this can manifest.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StructType {
-    name: Option<InternedStr>,
-    members: Vec<Symbol>,
+    /// name, size, alignment, offsets
+    Named(InternedStr, u64, u64, HashMap<InternedStr, u64>),
+    Anonymous(Vec<Symbol>),
 }
+*/
+pub type StructType = Vec<Symbol>;
 
 #[derive(Clone, Debug, Hash)]
 pub enum ArrayType {
@@ -101,7 +138,7 @@ pub struct FunctionType {
     // 2. when we do scoping, we need to know the names of formal parameters
     //    (as opposed to concrete arguments).
     //    this is as good a place to store them as any.
-    pub return_type: Box<Type>,
+    pub return_type: InternedType,
     pub params: Vec<Symbol>,
     pub varargs: bool,
 }
@@ -111,7 +148,7 @@ pub struct FunctionType {
 pub struct BitfieldType {
     pub offset: i32,
     pub name: Option<InternedStr>,
-    pub ctype: Type,
+    pub ctype: InternedType,
 }
 
 impl Type {
@@ -203,7 +240,7 @@ impl Type {
     #[inline]
     pub fn is_struct(&self) -> bool {
         match self {
-            Type::Struct(_) | Type::Union(_) => true,
+            Type::Struct(_, _) | Type::Union(_, _) => true,
             _ => false,
         }
     }
@@ -224,9 +261,8 @@ impl Type {
     }
     pub fn member_offset(&self, member: InternedStr) -> Result<u64, ()> {
         match self {
-            Type::Struct(StructType::Anonymous(members)) => Ok(self.struct_offset(members, member)),
-            Type::Struct(StructType::Named(_, _, _, offsets)) => Ok(*offsets.get(&member).unwrap()),
-            Type::Union(_) => Ok(0),
+            Type::Struct(_, members) => Ok(self.struct_offset(members, member)),
+            Type::Union(_, _) => Ok(0),
             _ => Err(()),
         }
     }
@@ -259,21 +295,19 @@ impl PartialEq for FunctionType {
     }
 }
 
-impl std::fmt::Display for Type {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+impl fmt::Display for Type {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         print_type(self, None, f)
     }
 }
 
-use std::fmt::{self, Formatter};
-
-pub fn print_type(ctype: &Type, name: Option<InternedStr>, f: &mut Formatter) -> fmt::Result {
+pub fn print_type(ctype: &Type, name: Option<InternedStr>, f: &mut fmt::Formatter) -> fmt::Result {
     print_pre(ctype, f)?;
     print_mid(ctype, name, f)?;
     print_post(ctype, f)
 }
 
-fn print_pre(ctype: &Type, f: &mut Formatter) -> fmt::Result {
+fn print_pre(ctype: &Type, f: &mut fmt::Formatter) -> fmt::Result {
     use Type::*;
     match ctype {
         Char(signed) | Short(signed) | Int(signed) | Long(signed) => {
@@ -290,17 +324,17 @@ fn print_pre(ctype: &Type, f: &mut Formatter) -> fmt::Result {
         Function(ftype) => write!(f, "{}", ftype.return_type),
         Enum(Some(ident), _) => write!(f, "enum {}", ident),
         Enum(None, _) => write!(f, "<anonymous enum>"),
-        Union(StructType::Named(ident, _, _, _)) => write!(f, "union {}", ident),
-        Union(_) => write!(f, "<anonymous union>"),
-        Struct(StructType::Named(ident, _, _, _)) => write!(f, "struct {}", ident),
-        Struct(_) => write!(f, "<anonymous struct>"),
+        Union(Some(ident), _) => write!(f, "union {}", ident),
+        Union(None, _) => write!(f, "<anonymous union>"),
+        Struct(Some(ident), _) => write!(f, "struct {}", ident),
+        Struct(None, _) => write!(f, "<anonymous struct>"),
         Bitfield(_) => unimplemented!("printing bitfield type"),
         VaList => write!(f, "va_list"),
         Error => write!(f, "<type error>"),
     }
 }
 
-fn print_mid(ctype: &Type, name: Option<InternedStr>, f: &mut Formatter) -> fmt::Result {
+fn print_mid(ctype: &Type, name: Option<InternedStr>, f: &mut fmt::Formatter) -> fmt::Result {
     match ctype {
         Type::Pointer(to) => {
             print_mid(to, None, f)?;
@@ -320,7 +354,7 @@ fn print_mid(ctype: &Type, name: Option<InternedStr>, f: &mut Formatter) -> fmt:
     }
     Ok(())
 }
-fn print_post(ctype: &Type, f: &mut Formatter) -> fmt::Result {
+fn print_post(ctype: &Type, f: &mut fmt::Formatter) -> fmt::Result {
     match ctype {
         Type::Pointer(to) => print_post(to, f),
         Type::Array(to, size) => {
@@ -357,9 +391,9 @@ fn print_post(ctype: &Type, f: &mut Formatter) -> fmt::Result {
 
 impl FunctionType {
     pub fn should_return(&self) -> bool {
-        *self.return_type != Type::Void
+        self.return_type != *VOID
     }
     pub fn has_params(&self) -> bool {
-        !(self.params.len() == 1 && self.params[0].ctype == Type::Void)
+        !(self.params.len() == 1 && self.params[0].ctype == *VOID)
     }
 }

@@ -83,7 +83,7 @@ impl Expr {
     }
     // first result: whether the expression itself is erroneous
     // second result: whether the expression was constexpr
-    pub fn constexpr(self) -> CompileResult<Locatable<(Token, Type)>> {
+    pub fn constexpr(self) -> CompileResult<Locatable<(Token, InternedType)>> {
         let folded = self.const_fold()?;
         match folded.expr {
             ExprType::Literal(token) => Ok(Locatable {
@@ -99,7 +99,7 @@ impl Expr {
         let location = self.location;
         let folded = match self.expr {
             ExprType::Literal(_) => self.expr,
-            ExprType::Id(ref name) => match &self.ctype {
+            ExprType::Id(ref name) => match &*self.ctype {
                 Type::Enum(_, members) => match members.iter().find(|member| member.0 == name.id) {
                     Some(enum_literal) => ExprType::Literal(Token::Int(enum_literal.1)),
                     _ => self.expr,

@@ -13,7 +13,7 @@ type IrResult = CompileResult<Value>;
 pub(crate) struct Value {
     pub(crate) ir_val: IrValue,
     ir_type: IrType,
-    ctype: Type,
+    ctype: InternedType,
 }
 
 enum FuncCall {
@@ -234,7 +234,7 @@ impl<'a> Compiler<'a> {
     fn compile_literal(
         &mut self,
         ir_type: IrType,
-        ctype: Type,
+        ctype: InternedType,
         token: Token,
         location: Location,
         builder: &mut FunctionBuilder,
@@ -290,7 +290,7 @@ impl<'a> Compiler<'a> {
         let ir_val = func(val.ir_val, val.ir_type, &ctype, builder);
         Ok(Value {
             ir_val,
-            ctype,
+            ctype: *ctype,
             ir_type: val.ir_type,
         })
     }
@@ -309,15 +309,16 @@ impl<'a> Compiler<'a> {
         );
         Self::binary_assign_ir(left, right, ctype, token, builder)
     }
-    fn binary_assign_ir(
+    fn binary_assign_ir<T: Into<Type>>(
         left: Value,
         right: Value,
-        ctype: Type,
+        ctype: T,
         token: Token,
         builder: &mut FunctionBuilder,
     ) -> IrResult {
         use cranelift::codegen::ir::InstBuilder as b;
         assert_eq!(left.ir_type, right.ir_type);
+        let ctype = ctype.into();
         let ir_type = ctype.as_ir_type();
         let signed = ctype.is_signed();
         let func = match (token, ir_type, signed) {
@@ -352,7 +353,7 @@ impl<'a> Compiler<'a> {
             ctype,
         })
     }
-    fn cast(&mut self, expr: Expr, ctype: Type, builder: &mut FunctionBuilder) -> IrResult {
+    fn cast(&mut self, expr: Expr, ctype: InternedType, builder: &mut FunctionBuilder) -> IrResult {
         // calculate this here before it's moved to `compile_expr`
         let orig_signed = expr.ctype.is_signed();
         let original = self.compile_expr(expr, builder)?;
@@ -493,7 +494,7 @@ impl<'a> Compiler<'a> {
             }
             Id::Local(stack_slot) => builder.ins().stack_addr(ptr_type, *stack_slot, 0),
         };
-        let ctype = Type::Pointer(Box::new(var.ctype));
+        let ctype = Type::Pointer(var.ctype);
         Ok(Value {
             ir_type: ctype.as_ir_type(),
             ir_val,
