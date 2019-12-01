@@ -1,10 +1,45 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::Symbol;
 use crate::arch::SIZE_T;
 use crate::intern::InternedStr;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+static TYPES: Vec<Type> = Default::default();
+lazy_static! {
+    static ref TYPE_INDEXES: HashMap<&'static Type, usize> = Default::default();
+}
+static NUM_TYPES: AtomicUsize = AtomicUsize::new(0);
+
+#[derive(Copy, Clone, Debug, Eq, Hash)]
+pub struct InternedType(usize);
+
+impl std::ops::Deref for InternedType {
+    type Target = Type;
+    fn deref(&self) -> &Self::Target {
+        &TYPES[self.0]
+    }
+}
+
+impl PartialEq for InternedType {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0 || *self == *other
+    }
+}
+
+impl Type {
+    pub fn get_or_intern(self) -> InternedType {
+        if let Some(index) = TYPE_INDEXES.get(&self) {
+            return InternedType(*index);
+        }
+        let index = NUM_TYPES.fetch_add(1, Ordering::AcqRel);
+        TYPE_INDEXES.insert(&self, index);
+        TYPES.insert(index, self);
+        InternedType(index)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Type {
     Void,
     Bool,
@@ -14,8 +49,8 @@ pub enum Type {
     Long(bool),
     Float,
     Double,
-    Pointer(Box<Type>),
-    Array(Box<Type>, ArrayType),
+    Pointer(InternedType),
+    Array(InternedType, ArrayType),
     Function(FunctionType),
     Union(StructType),
     Struct(StructType),
@@ -44,20 +79,19 @@ pub enum Type {
 /// struct that has not yet been defined. This may be fixed at some point in
 /// the future. Until then, all consumers are stuck. See
 /// https://github.com/jyn514/rcc/issues/44 for an example of how this can manifest.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum StructType {
-    /// name, size, alignment, offsets
-    Named(InternedStr, u64, u64, HashMap<InternedStr, u64>),
-    Anonymous(Vec<Symbol>),
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct StructType {
+    name: Option<InternedStr>,
+    members: Vec<Symbol>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Hash)]
 pub enum ArrayType {
     Fixed(SIZE_T),
     Unbounded,
 }
 
-#[derive(Clone, Debug, Eq)]
+#[derive(Clone, Debug, Eq, Hash)]
 // note: old-style declarations are not supported at this time
 pub struct FunctionType {
     // why Symbol instead of Type?
@@ -73,7 +107,7 @@ pub struct FunctionType {
 }
 
 #[allow(dead_code)]
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct BitfieldType {
     pub offset: i32,
     pub name: Option<InternedStr>,
