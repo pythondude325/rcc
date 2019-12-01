@@ -1284,7 +1284,7 @@ impl<I: Iterator<Item = Lexeme>> Parser<I> {
     }
     fn update_forward_declarations(
         ctype: &mut Type,
-        new_members: &std::rc::Rc<Vec<Symbol>>,
+        new_members: &Vec<Symbol>,
         ident: InternedStr,
     ) {
         use Type::*;
@@ -1301,7 +1301,7 @@ impl<I: Iterator<Item = Lexeme>> Parser<I> {
                 }
             }
             Union(Some(name), members) | Struct(Some(name), members) if *name == ident => {
-                *members = new_members;
+                *members = (*new_members).clone();
             }
             Union(_, _) | Struct(_, _) => {} // can't have incomplete type as struct field
             Void

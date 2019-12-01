@@ -290,26 +290,18 @@ mod tests {
             storage_class: StorageClass::Auto,
         }
     }
-    fn struct_for_types(types: Vec<Type>) -> Type {
-        let members = {
-            let mut v = vec![];
-            for (i, ctype) in types.into_iter().enumerate() {
-                v.push(symbol_for_type(
-                    ctype,
-                    InternedStr::get_or_intern(i.to_string()),
-                ));
-            }
-            v
-        };
-        Type::Struct(StructType::Anonymous(members))
+    fn struct_for_types(types: Vec<InternedType>) -> Vec<Symbol> {
+        let mut members = vec![];
+        for (i, ctype) in types.into_iter().enumerate() {
+            members.push(symbol_for_type(
+                ctype,
+                InternedStr::get_or_intern(i.to_string()),
+            ));
+        }
+        members
     }
     fn assert_offset(types: Vec<Type>, member_index: usize, offset: u64) {
-        let struct_type = struct_for_types(types);
-        let members = if let Type::Struct(StructType::Anonymous(m)) = &struct_type {
-            m
-        } else {
-            unreachable!()
-        };
+        let members = struct_for_types(types.into_iter().map(|t| t.into()));
         let member = members[member_index].id;
         assert_eq!(struct_type.struct_offset(members, member), offset);
     }

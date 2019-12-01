@@ -46,6 +46,17 @@ impl Type {
     }
 }
 
+impl InternedType {
+    pub fn update<F>(self, mut f: F)
+    where
+        F: FnOnce(&mut Type),
+    {
+        let ty = TYPES.get_mut(self.0).unwrap();
+        f(ty);
+        TYPE_INDEXES.insert(&ty, self.0);
+    }
+}
+
 impl Into<&Type> for InternedType {
     fn into(self) -> &'static Type {
         &*self

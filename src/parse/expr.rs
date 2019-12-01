@@ -1158,17 +1158,17 @@ impl Expr {
     // - functions -> pointers
     // - variables -> value stored in that variable
     pub fn rval(self) -> Expr {
-        match self.ctype {
+        match &*self.ctype {
             // a + 1 is the same as &a + 1
             Type::Array(to, _) => Expr {
                 lval: false,
-                ctype: Type::Pointer(to),
+                ctype: Type::Pointer(to).into(),
                 constexpr: false,
                 ..self
             },
             Type::Function(_) => Expr {
                 lval: false,
-                ctype: Type::Pointer(Box::new(self.ctype)),
+                ctype: Type::Pointer(self.ctype).into(),
                 constexpr: false, // TODO: is this right?
                 ..self
             },
@@ -1184,24 +1184,24 @@ impl Expr {
     }
     fn default_promote(self) -> RecoverableResult<Expr, SemanticError> {
         let expr = self.rval();
-        let ctype = expr.ctype.clone().default_promote();
-        expr.cast(&ctype)
+        let ctype = expr.ctype.clone().default_promote().into();
+        expr.cast(ctype)
     }
     // Perform an integer conversion, including all relevant casts.
     //
     // See `Type::integer_promote` for conversion rules.
     fn integer_promote(self) -> RecoverableResult<Expr, SemanticError> {
         let expr = self.rval();
-        let ctype = expr.ctype.clone().integer_promote();
-        expr.cast(&ctype)
+        let ctype = expr.ctype.clone().integer_promote().into();
+        expr.cast(ctype)
     }
     // Perform a binary conversion, including all relevant casts.
     //
     // See `Type::binary_promote` for conversion rules.
     fn binary_promote(left: Expr, right: Expr) -> RecoverableResult<(Expr, Expr), SemanticError> {
         let (left, right) = (left.rval(), right.rval());
-        let ctype = Type::binary_promote(left.ctype.clone(), right.ctype.clone());
-        match (left.cast(&ctype), right.cast(&ctype)) {
+        let ctype = Type::binary_promote(left.ctype.into(), right.ctype.into()).into();
+        match (left.cast(ctype), right.cast(ctype)) {
             (Ok(left_cast), Ok(right_cast)) => Ok((left_cast, right_cast)),
             (Err((err, left)), Ok(right)) | (Ok(left), Err((err, right)))
             // TODO: don't ignore this right error
@@ -1520,11 +1520,11 @@ impl Expr {
             ExprType::Literal(Token::Str(value)),
         )
     }
-    fn literal(ctype: InternedType, location: Location, expr: ExprType) -> Expr {
+    fn literal<T: Into<InternedType>>(ctype: T, location: Location, expr: ExprType) -> Expr {
         Expr {
             constexpr: true,
             lval: false,
-            ctype,
+            ctype: ctype.into(),
             location,
             expr,
         }
@@ -1576,22 +1576,22 @@ impl Type {
     ///
     /// Trying to promote derived types (pointers, functions, etc.) is an error.
     /// Pointer arithmetic should not promote either argument, see 6.5.6 of the C standard.
-    fn binary_promote(mut left: Type, mut right: Type) -> Type {
+    fn binary_promote(mut left: &Type, mut right: &Type) -> Type {
         use Type::*;
-        if left == Double || right == Double {
+        if *left == Double || *right == Double {
             return Double; // toil and trouble
-        } else if left == Float || right == Float {
+        } else if *left == Float || *right == Float {
             return Float;
         }
-        left = left.integer_promote();
-        right = right.integer_promote();
+        left = &left.integer_promote();
+        right = &right.integer_promote();
         let signs = (left.sign(), right.sign());
         // same sign
         if signs.0 == signs.1 {
             return if left.rank() >= right.rank() {
-                left
+                left.clone()
             } else {
-                right
+                right.clone()
             };
         };
         let (signed, unsigned) = if signs.0 {
@@ -1600,9 +1600,9 @@ impl Type {
             (right, left)
         };
         if signed.can_represent(&unsigned) {
-            signed
+            signed.clone()
         } else {
-            unsigned
+            unsigned.clone()
         }
     }
     fn pointer_promote(left: &mut Expr, right: &mut Expr) -> bool {
